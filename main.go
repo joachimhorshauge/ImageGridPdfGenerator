@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"crypto/sha1"
+	"flag"
 	"fmt"
 	"image"
+	"image/color"
+	"image/draw"
 	"image/jpeg"
 	"log"
 	"math/rand"
@@ -23,23 +26,26 @@ const (
 )
 
 var (
-	imgSize     = 50.0 // size of each image in the grid (in points, for PDF)
-	marginTop   = 10.0 // top margin
-	marginLeft  = 10.0 // left margin
-	cellSpacing = 2.0  // spacing between cells
+	imgSize       = 50.0 // size of each image in the grid (in points, for PDF)
+	marginTop     = 10.0 // top margin
+	marginLeft    = 10.0 // left margin
+	cellSpacing   = 2.0  // spacing between cells
+	overlaySquare = flag.Bool("overlay", false, "Overlay a white square with a black border on the bottom right of each image")
 )
 
 func main() {
-	if len(os.Args) != 4 {
-		fmt.Println("Usage: go run main.go <image_folder_path> <number_of_pages> <output_pdf>")
+	flag.Parse()
+
+	if len(flag.Args()) != 3 {
+		fmt.Println("Usage: go run main.go [--overlay] <image_folder_path> <number_of_pages> <output_pdf>")
 		return
 	}
 
-	imageFolder := os.Args[1]
-	numPages := atoi(os.Args[2])
-	outputPDF := os.Args[3]
+	imageFolder := flag.Args()[0]
+	numPages := atoi(flag.Args()[1])
+	outputPDF := flag.Args()[2]
 
-	fmt.Printf("Loading images from folder: %s", imageFolder)
+	log.Printf("Loading images from folder: %s", imageFolder)
 	images, err := loadAndResizeImages(imageFolder)
 	if err != nil {
 		log.Fatalf("Failed to load images from folder: %v", err)
@@ -52,7 +58,7 @@ func main() {
 	fmt.Printf("\nGenerating PDF with %d pages\n", numPages)
 	generatePDF(images, numPages, outputPDF)
 	fmt.Printf("\nGenerated %d pages\n", numPages) // Move to a new line after the last update
-	fmt.Printf("PDF generated successfully: %s", outputPDF)
+	log.Printf("PDF generated successfully: %s", outputPDF)
 }
 
 func atoi(s string) int {
@@ -132,6 +138,10 @@ func resizeImage(imagePath string) ([]byte, error) {
 	cellSize := uint(imgSize)
 	resizedImg := resize.Resize(cellSize, cellSize, img, resize.Lanczos3)
 
+	if *overlaySquare {
+		resizedImg = addOverlay(resizedImg)
+	}
+
 	var buf bytes.Buffer
 	err = jpeg.Encode(&buf, resizedImg, nil)
 	if err != nil {
@@ -139,6 +149,37 @@ func resizeImage(imagePath string) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+func addOverlay(img image.Image) image.Image {
+	// Create a new image with the same dimensions as the resized image
+	rgba := image.NewRGBA(img.Bounds())
+
+	// Draw the original image onto the new RGBA image
+	draw.Draw(rgba, rgba.Bounds(), img, image.Point{}, draw.Src)
+
+	// Define the size of the white square overlay
+	overlaySize := int(0.2 * float64(img.Bounds().Dx())) // 20% of the image width
+
+	// Define the position of the square (bottom-right corner)
+	rect := image.Rect(rgba.Bounds().Dx()-overlaySize, rgba.Bounds().Dy()-overlaySize, rgba.Bounds().Dx(), rgba.Bounds().Dy())
+
+	// Draw the white square
+	white := image.NewUniform(color.White)
+	draw.Draw(rgba, rect, white, image.Point{}, draw.Src)
+
+	// Draw the black border
+	black := color.RGBA{0, 0, 0, 255}
+	for x := rect.Min.X; x < rect.Max.X; x++ {
+		rgba.Set(x, rect.Min.Y, black)
+		rgba.Set(x, rect.Max.Y-1, black)
+	}
+	for y := rect.Min.Y; y < rect.Max.Y; y++ {
+		rgba.Set(rect.Min.X, y, black)
+		rgba.Set(rect.Max.X-1, y, black)
+	}
+
+	return rgba
 }
 
 func generatePDF(images [][]byte, numPages int, outputPDF string) {
